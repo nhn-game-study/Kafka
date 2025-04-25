@@ -3,6 +3,7 @@ package com.alert.alert_front_server.adapter.in.rest.controller;
 import com.alert.alert_front_server.adapter.in.rest.dto.NotificationRequest;
 import com.alert.alert_front_server.adapter.in.rest.dto.NotificationResponse;
 import com.alert.alert_front_server.adapter.in.rest.mapper.NotificationRestMapper;
+import com.alert.alert_front_server.adapter.out.external.ExternalSenderService;
 import com.alert.alert_front_server.application.port.in.RegisterNotificationUseCase;
 import com.alert.alert_front_server.common.response.BaseResponse;
 import com.alert.alert_front_server.domain.NotificationDomain;
@@ -22,6 +23,7 @@ public class NotificationController {
 
 	private final RegisterNotificationUseCase registerNotification;
 	private final NotificationRestMapper notificationRestMapper;
+	private final ExternalSenderService externalSenderService;
 
 	/**
 	 * '알림발송등록 API'
@@ -32,7 +34,9 @@ public class NotificationController {
 		var command = notificationRestMapper.toCommand(request);
 		NotificationDomain savedDomain = registerNotification.registerNotification(command);
 		NotificationResponse response = notificationRestMapper.toResponse(savedDomain);
-		// todo : API 호출
+
+		externalSenderService.send(savedDomain);
+
 		return ResponseEntity.ok(response);
 	}
 
