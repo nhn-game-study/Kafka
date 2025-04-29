@@ -1,4 +1,4 @@
-## 위 코드 리팩토링
+## `NotificationController` 리팩토링
 
 ### 1. 관심사 분리
 - **외부 API 호출 후 동기식 처리**  
