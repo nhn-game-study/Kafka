@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -63,9 +64,10 @@ class ExternalSenderServiceTest {
 		);
 
 		Mono<Boolean> resultMono = externalSenderService.send(domain);
-		Boolean result = resultMono.block();
 
-		assertThat(result).isTrue();
+		StepVerifier.create(resultMono)
+				.expectNext(true)
+				.verifyComplete();
 
 		mockServerClient.verify(
 				HttpRequest.request()
