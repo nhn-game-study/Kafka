@@ -188,3 +188,42 @@ public void handle(MemberRegisteredEvent event) {
 
 ### 의문
 -  이벤트 발행 자체가 실패하는 케이스를 대비하는 방법
+
+---
+
+## 정예림 - 메세지/파일 백업 후 로그
+
+
+```java
+/***
+ * BackupService.java
+ */
+public void backupMsg(MessageDto messageDto) {
+    // backup
+    Message msg = messageRepository.save(messageDto.toEntity());
+    eventPublisher.publishEvent(new BackupEvent(msg.getId()));
+}
+
+/***
+ * BackupEventListener.java
+ */
+@EventListener
+public void handle(BackupEvent event) {
+    logService.post(event); // 로그 서버로 post 요청
+}
+```
+
+---
+
+@EventListener
+- 단일 애플리케이션 내의 이벤트 처리에는 유용하지만,
+- 마이크로서비스 환경에서는 이벤트 전파 범위, 메시지 신뢰성, 장애 복구, 확장성 측면에서 한계
+- MSA 구조에서는 Kafka나 RabbitMQ 같은 외부 메시지 브로커 기반의 이벤트 시스템이 필수적!
+
+| **상황** | **사용 도구** | **이유** |
+| --- | --- | --- |
+| 같은 애플리케이션 내에서 후속 처리 | @EventListener | 간단, 코드로 관리 가능 |
+| 비동기 후처리 (예: 이메일 발송) | @Async + @EventListener | 비동기 처리 간편 |
+| 서비스 간 통신이 필요한 경우 | Kafka | 분산 환경에 적합 |
+| 대용량 로그/이벤트 처리 | Kafka | 안정적이고 확장 가능 |
+| 트랜잭션 이후 이벤트 발생 필요 | @TransactionalEventListener | DB commit 이후 실행 보장 |
