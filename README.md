@@ -30,3 +30,105 @@
 1. AOP는 적용 범위가 큰 경우
 2. 이벤트핸들러는 적용범위가 더 작은 경우
 3. 전처리 후처리 요구사항이 많으면 `Aop`가 이벤트 핸들러보다 더 많다.
+
+
+
+# 이벤트 핸들러 사용 사례
+
+## 김성현 - 쇼핑시스템 구축
+- '상의' 카데고리에서 가장 저렴한 상품 조회
+  - 매번 DB에서 가장 낮은 가격을 조회하면 성능이 떨어짐 (만약 '상의' 카데고리 상품이 100,0000개 라면?)
+> 위 문제를 해결하기 위해 캐시 도입
+
+- 상품을 CRUD 할 때, 캐시에 반영 되어야함
+  - 상품 create, update, delete 시, 캐시 반영 로직 넣어야함
+ 
+> 만약 캐시 관련 로직이 많아진다면?
+> 예를 들어, '브랜드' 카데고리에서 가장 저렴한 상품 조회, 브랜드의 전체 상품 가격을 합쳤을 떄 가장 저렴한 브랜드 등 상품 관련 캐싱이 필요한 기능들이 추가된다면?
+
+- 상품을 CRUD 할 때 여러 캐시에 반영되어야한다.
+  - 레디스로 가정하면, 상품 등록시 3개의 키에 대한 로직을 구성해야함
+
+> 상품 CRUD 시, DB에 넣어야 하는 로직 뿐만 아니라, 캐싱 관련 로직이 계속해서 추가된다.
+> 관심사 분리하기 위해, 이벤트 핸들러로 캐시 로직에 대한 의존성을 분리하였다.
+
+### before
+
+```
+	@Override
+	@Transactional
+	public Product createProduct(String brandName, String categoryName, long priceValue) {
+		Category category = selectCategoryPort.findByName(categoryName);
+		Product product = saveProductPort.saveProduct(brandName, categoryName, priceValue);
+
+    // 해당 카데고리 최저가 캐시 업데이트
+		Product minPriceProduct = productCachePort.getMinPrice(category);
+		// 비교
+		if (minPriceProduct == null || product.getId() == minPriceProduct.getId() || product.getPriceValue() < minPriceProduct.getPriceValue()) {
+			productCachePort.putMinPrice(category.getName(), product);
+		}
+
+    // 해당카데고리 최고가 캐시 업데이트
+		Product maxPriceProduct = productCachePort.getMaxPrice(category);
+		// 비교
+		if (maxPriceProduct == null || product.getId() == maxPriceProduct.getId() || product.getPriceValue() > maxPriceProduct.getPriceValue()) {
+			productCachePort.putMaxPrice(category.getName(), product);
+		}
+
+		// 브랜드 총합 캐시 업데이트
+		Long oldTotal = brandCachePort.getBrandTotal(brandName);
+		long newTotal = (oldTotal == null ? 0 : oldTotal) + priceValue;
+		brandCachePort.putBrandTotal(brandName, newTotal);
+
+    // 상품 관련 캐시에 추가될 수록 아래 코드 늘어남
+
+		return product;
+	}
+```
+
+### After
+
+```
+	@Override
+	@Transactional
+	public Product createProduct(String brandName, String categoryName, long priceValue) {
+		Category category = selectCategoryPort.findByName(categoryName);
+		Product product = saveProductPort.saveProduct(brandName, categoryName, priceValue);
+
+    eventPublisher.publishEvent(new ProductCreatedEvent(this, product));
+
+		return product;
+	}
+```
+
+
+`ProductEventListener.java`
+
+```
+	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+	public void handleProductCreated(ProductCreatedEvent event) {
+		Product product = event.getProduct();
+
+    // 해당 카데고리 최저가 캐시 업데이트
+		Product minPriceProduct = productCachePort.getMinPrice(category);
+		// 비교
+		if (minPriceProduct == null || product.getId() == minPriceProduct.getId() || product.getPriceValue() < minPriceProduct.getPriceValue()) {
+			productCachePort.putMinPrice(category.getName(), product);
+		}
+
+    // 해당카데고리 최고가 캐시 업데이트
+		Product maxPriceProduct = productCachePort.getMaxPrice(category);
+		// 비교
+		if (maxPriceProduct == null || product.getId() == maxPriceProduct.getId() || product.getPriceValue() > maxPriceProduct.getPriceValue()) {
+			productCachePort.putMaxPrice(category.getName(), product);
+		}
+
+		// 브랜드 총합 캐시 업데이트
+		Long oldTotal = brandCachePort.getBrandTotal(brandName);
+		long newTotal = (oldTotal == null ? 0 : oldTotal) + priceValue;
+		brandCachePort.putBrandTotal(brandName, newTotal);
+	}
+```
+
+### 의문
+
