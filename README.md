@@ -317,10 +317,73 @@ public void auditLogPayment(JoinPoint joinPoint, Object result) {
         // 감사 로그 처리
 }
 ```
+---
 
+## 노혜주 - 이벤트 핸들러가 왜 필요한가??
 
+* 참고 문서 : https://techblog.woowahan.com/7835/
+### 회원 시스템 이벤트 기반 아키텍처 구축
+“회원의 본인인증이 초기화되는 경우 가족계정 서비스에서 탈퇴되어야 한다" 라는 정책
+#### 강한 결합을 가진 구조
+```java
+pubic void initCerticationOwn(MemberNumber memberNumber) {
+	member.initCerticationOwn(memberNumber);
+	family.leave(memberNumber);
+}
+```
+* 가족계정 서비스 탈퇴 로직은 회원의 본인인증 해제 로직에 깊게 관여되어 강한 결합
+#### 하나의 시스템에 존재하던 두 도메인의 물리적인 분리
+```java
+pubic void initCerticationOwn(MemberNumber memberNumber) {
+	member.initCerticationOwn(memberNumber);
+	familyClient.leave(memberNumber);
+}
+```
+* 마이크로서비스를 구성 -> 물리적인 시스템의 분리 -> 코드 레벨의 호출이 동기적인 HTTP 통신으로 변경
+* 물리적인 시스템 분리만으로는 결합이 느슨해졌다고 볼 수는 없다. -> 대상 도메인을 호출해야한다는 의도가 남아있기 때문
+#### 비동기 호출 : 물리적 결합 제거
+```java
+pubic void initCerticationOwn(MemberNumber memberNumber) {
+	member.initCerticationOwn(memberNumber);
+	familyClient.leave(memberNumber);
+}
 
+class FamilyClient {
+	@Async
+	void leave(MemberNumber memberNumber) {}
+}
+```
+* 물리적인 의존을 제거하는 대표적인 방법 : 비동기  방식(대표적) -> 별도 스레드에서 진행되기 때문에 주 흐름과 직접적인 결합이 제거
+* 시스템 관점에서는 결합이 느슨해졌다고 볼 수 없다 -> 여전히 별도 스레드에서 대상 도메인을 호출한다는 의도가 남아있기 때문
+#### 메시지 발송 : 물리적 결합 제거
+```java
+pubic void initCerticationOwn(MemberNumber memberNumber) {
+	member.initCerticationOwn(memberNumber);
+	eventPublisher.familyLeave(memberNumber);
+}
+```
+* 회원의 본인인증 해제가 발생할 때 가족계정 탈퇴 메시지를 발송 : 메시지 발송 = 물리적 결합 제거
+* 결합이 느슨해져지 않았다 : 논리적인 의존관계가 남아있기 때문 = 물리적으로는 결합도가 높지 않지만 개념적으로는 결합도가 높은 상태
+* 메시징 시스템으로 보낸 메시지가 대상 도메인에게 기대하는 목적을 담았다면, 이것은 이벤트 X. 이것은 메시징 시스템을 이용한 비동기 요청일 뿐
 
+#### 논리적 결합 제거
+```java
+pubic void initCerticationOwn(MemberNumber memberNumber) {
+	member.initCerticationOwn(memberNumber);
+	eventPublisher.initCerticationOwn(memberNumber);
+}
+
+class Family {
+	public void listenMemberOwnInitEvent(MemberNumber memberNumber) {
+		family.leave(memberNumber);
+	}
+}
+```
+* 발행해야할 이벤트는 도메인 이벤트로 인해 달성하려는 목적이 아닌 도메인 이벤트 그 자체
+* 회원시스템은 가족계정 시스템의 정책을 모른다
+##### 이렇게 바뀜으로서의 장점?
+* 확장 가능성 : 본인 인증 해제가 될 때, 다른 도메인에서 작업이 필요할 경우 동일하게 이벤트 핸들러로 처리 가능
+* 회원시스템 코드도 깔끔해진다 : 논리적으로 회원시스템이 처리할 로직은 회원시스템에서 처리. 다른 도메인의 로직은 알 필요 X
 ⸻
 
 정리: 어떤 상황에 어떤 방법이 적합할까?
