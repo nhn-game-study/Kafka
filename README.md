@@ -187,3 +187,4 @@ public void handle(MemberRegisteredEvent event) {
 ```
 
 ### 의문
+-  이벤트 발행 자체가 실패하는 케이스를 대비하는 방법
