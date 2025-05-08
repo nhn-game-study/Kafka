@@ -227,3 +227,113 @@ public void handle(BackupEvent event) {
 | 서비스 간 통신이 필요한 경우 | Kafka | 분산 환경에 적합 |
 | 대용량 로그/이벤트 처리 | Kafka | 안정적이고 확장 가능 |
 | 트랜잭션 이후 이벤트 발생 필요 | @TransactionalEventListener | DB commit 이후 실행 보장 |
+
+## 김영현 - 주문 결제 시나리오 (AOP vs 이벤트 핸들러 고민)
+
+### 시나리오
+#### 사용자가 상품을 주문하면, 다음 작업들이 필요하다:
+1. 재고 차감
+2. 결제 처리
+3. 주문 내역 저장
+4. 포인트 적립
+5. 구매확정 알림톡 또는 이메일 발송
+6. 마케팅 팀에 구매 정보 전달 (이벤트 알림, 분석용)
+
+⸻
+
+### 문제점
+* 주문 처리 도메인(OrderService)에 다양한 부수 로직이 혼합되어 있음.
+* 기능이 늘어나면, 코드가 복잡해지고 유지보수가 어려워짐.
+* SRP (단일 책임 원칙) 위배.
+* 각 작업의 성격이 다름 (트랜잭션 내 작업, 비동기 작업 등).
+
+⸻
+
+### Before
+```java
+@Transactional
+public void placeOrder(OrderRequest orderRequest) {
+    // 1. 주문 저장
+    Order order = orderRepository.save(orderRequest.toEntity());
+
+    // 2. 재고 차감
+    inventoryService.decrease(order.getProductId(), order.getQuantity());
+
+    // 3. 결제 처리
+    paymentService.processPayment(order.getId(), orderRequest.getPaymentInfo());
+
+    // 4. 포인트 적립
+    pointService.addPoints(order.getUserId(), order.calculateRewardPoints());
+
+    // 5. 알림톡 또는 이메일 발송
+    notificationService.sendOrderConfirmation(order.getUserEmail());
+
+    // 6. 마케팅용 주문 데이터 전송
+    marketingService.sendPurchaseEvent(order);
+}
+```
+
+⸻
+
+### After (이벤트 기반 리팩토링)
+```java
+@Transactional
+public void placeOrder(OrderRequest orderRequest) {
+    Order order = orderRepository.save(orderRequest.toEntity());
+    inventoryService.decrease(order.getProductId(), order.getQuantity());
+    paymentService.processPayment(order.getId(), orderRequest.getPaymentInfo());
+
+    // 핵심 도메인 처리 후 이벤트 발행
+    eventPublisher.publishEvent(new OrderCompletedEvent(order));
+}
+
+// OrderEventListener.java
+@EventListener
+public void handle(OrderCompletedEvent event) {
+    Order order = event.getOrder();
+
+    // 포인트 적립
+    pointService.addPoints(order.getUserId(), order.calculateRewardPoints());
+
+    // 알림 발송
+    notificationService.sendOrderConfirmation(order.getUserEmail());
+
+    // 마케팅 시스템에 이벤트 전달
+    marketingService.sendPurchaseEvent(order);
+}
+```
+
+⸻
+
+### AOP 도입 고민 포인트
+
+만약 다음과 같은 요구사항이 추가된다면 AOP가 적합할 수도 있음:
+* 모든 서비스 메서드에 대해 공통적으로 이벤트 로그 저장, 보안 체크, 트랜잭션 커밋 후 감사 로그 기록 등 횡단 관심사 처리가 필요할 때
+* 예: @AfterReturning 으로 특정 서비스에서 결제가 성공한 후 감사 로그 기록
+
+```java
+@AfterReturning(pointcut = "execution(* com.example.service.PaymentService.processPayment(..))", returning = "result")
+public void auditLogPayment(JoinPoint joinPoint, Object result) {
+        // 감사 로그 처리
+}
+```
+
+
+
+
+⸻
+
+정리: 어떤 상황에 어떤 방법이 적합할까?
+
+| 구분 | 이벤트 핸들러 | AOP |
+|--|--|--|
+| 관심사 분리 목적 | 도메인 이벤트 분리 | 횡단 관심사 (로깅, 인증 등) |
+| 강점 | 비동기/비결합 구조, 유연한 확장성 | 코드 외부에서 공통 로직 주입 |
+| 단점 | 디버깅 어려움, 흐름 추적 어려움 | 비즈니스 흐름 개입에는 부적절 |
+| 추천 시점 | 부수 기능(포인트, 알림, 통계 등)이 많아질 때 | 단일 행위에 공통 기능 삽입 시 |
+
+### 내 생각
+* 이 둘을 비교한다기 보다는 각 요청상황에 맞게 이벤트 핸들러와 AOP를 적절히 조합하여 사용하면 될 것 같음.
+* ![공장 컨베이어 시스템](img.png)
+* 생산라인을 생각하면 앞에서 뭐가 일어나든 나한테 온 상태만 중요함
+* 공장 생산라인이 더 좋은 방법이 있다면 더 발전 했을텐데 해당 방식을 고수하는 것을 보면 현재는 이게 최선인 것 같음?ㅋ
